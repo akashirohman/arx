@@ -12,7 +12,7 @@ const protocol = url.startsWith('https') ? https : http;
 
 function sendRequest() {
   const req = protocol.get(url, (res) => {
-    res.on('data', () => {}); // consume data to free memory
+    res.on('data', () => {}); // consume data
     res.on('end', () => {
       success++;
       reportStats();
