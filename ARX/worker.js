@@ -1,50 +1,37 @@
 const { workerData, parentPort } = require('worker_threads');
-const http = require('http');
 const https = require('https');
+const http = require('http');
+const { URL } = require('url');
 
-const { id, url, rps, duration } = workerData;
+const { url, rps, duration } = workerData;
+const parsedUrl = new URL(url);
+const client = parsedUrl.protocol === 'https:' ? https : http;
 
-let sent = 0;
-let success = 0;
-let failed = 0;
-
-const protocol = url.startsWith('https') ? https : http;
+let stop = false;
+const interval = 1000 / rps;
+const endTime = Date.now() + duration * 1000;
 
 function sendRequest() {
-  const req = protocol.get(url, (res) => {
-    res.on('data', () => {}); // consume data
-    res.on('end', () => {
-      success++;
-      reportStats();
-    });
+  if (Date.now() >= endTime || stop) {
+    parentPort.postMessage({ done: true });
+    return;
+  }
+
+  const req = client.request({
+    method: 'GET',
+    hostname: parsedUrl.hostname,
+    port: parsedUrl.port || (parsedUrl.protocol === 'https:' ? 443 : 80),
+    path: parsedUrl.pathname + parsedUrl.search,
+    timeout: 2000,
+  }, res => {
+    res.on('data', () => {});
+    res.on('end', () => {});
   });
 
-  req.on('error', () => {
-    failed++;
-    reportStats();
-  });
-
+  req.on('error', () => {});
   req.end();
-  sent++;
-  reportStats();
+
+  setTimeout(sendRequest, interval);
 }
 
-function reportStats() {
-  parentPort.postMessage({
-    stat: true,
-    id,
-    sent,
-    success,
-    failed
-  });
-}
-
-const intervalTime = 1000 / rps;
-const interval = setInterval(() => {
-  sendRequest();
-}, intervalTime);
-
-setTimeout(() => {
-  clearInterval(interval);
-  parentPort.postMessage({ done: true, id });
-}, duration * 1000);
+sendRequest();
