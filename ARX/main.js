@@ -2,141 +2,129 @@ const readline = require('readline');
 const { Worker } = require('worker_threads');
 const path = require('path');
 
-let targetQueue = [];
-let isRunning = false;
-let workerStats = {};
-let targetStats = {};
-
 const rl = readline.createInterface({
   input: process.stdin,
   output: process.stdout
 });
 
-rl.setPrompt('Command (next/stop): ');
-rl.prompt();
+let targetId = 0;
+const activeTargets = new Map();
+const baseLine = 5; // mulai baris ke-5 untuk statistik supaya ada ruang input
 
 function promptTargetInput() {
   rl.question('Target URL: ', (url) => {
     rl.question('Threads (default 10): ', (threads) => {
       rl.question('RPS (default 100): ', (rps) => {
         rl.question('Duration in seconds (default 30): ', (duration) => {
-          targetQueue.push({
+          startTarget({
+            id: targetId++,
             url,
             threads: parseInt(threads) || 10,
             rps: parseInt(rps) || 100,
             duration: parseInt(duration) || 30
           });
-          if (!isRunning) runNextTarget();
-          else rl.prompt();
+          rl.prompt();
         });
       });
     });
   });
 }
 
-function displayStatsInline() {
-  let totalSent = 0;
-  let totalSuccess = 0;
-  let totalFailed = 0;
+function startTarget(target) {
+  console.log(`\n[INFO] Starting target #${target.id} -> ${target.url} | Threads: ${target.threads}, RPS: ${target.rps}, Duration: ${target.duration}s`);
 
-  Object.values(workerStats).forEach(stat => {
-    totalSent += stat.sent;
-    totalSuccess += stat.success;
-    totalFailed += stat.failed;
-  });
-
-  // Simpan posisi cursor lalu tulis statistik di satu baris
-  readline.cursorTo(process.stdout, 0);
-  process.stdout.write(`[STATS] Sent: ${totalSent} | Success: ${totalSuccess} | Failed: ${totalFailed}               `);
-  // Tampilkan prompt lagi agar user tetap bisa input
-  rl.prompt(true);
-}
-
-function runNextTarget() {
-  if (targetQueue.length === 0) {
-    rl.prompt();
-    return;
-  }
-
-  const target = targetQueue.shift();
-  const currentTargetUrl = target.url;
-  isRunning = true;
-  console.log(`\n[INFO] Starting attack on ${currentTargetUrl} for ${target.duration}s with ${target.threads} threads at ${target.rps} RPS.`);
-
-  let activeThreads = 0;
-  workerStats = {};
-
+  let stats = {};
   for (let i = 0; i < target.threads; i++) {
     const worker = new Worker(path.resolve(__dirname, 'worker.js'), {
       workerData: {
         id: i,
-        url: currentTargetUrl,
+        url: target.url,
         rps: Math.floor(target.rps / target.threads),
         duration: target.duration
       }
     });
 
-    workerStats[i] = { sent: 0, success: 0, failed: 0 };
-    activeThreads++;
+    stats[i] = { sent: 0, success: 0, failed: 0 };
 
     worker.on('message', (msg) => {
-      if (msg.done) {
-        activeThreads--;
-        if (activeThreads === 0) {
-          process.stdout.write('\n');
-
-          let totalSent = 0, totalSuccess = 0, totalFailed = 0;
-          Object.values(workerStats).forEach(stat => {
-            totalSent += stat.sent;
-            totalSuccess += stat.success;
-            totalFailed += stat.failed;
-          });
-
-          targetStats[currentTargetUrl] = {
-            sent: totalSent,
-            success: totalSuccess,
-            failed: totalFailed
-          };
-
-          console.log(`[INFO] Completed target: ${currentTargetUrl}`);
-          console.log(`[RESULT] Sent: ${totalSent}, Success: ${totalSuccess}, Failed: ${totalFailed}\n`);
-
-          isRunning = false;
-          rl.prompt();
-        }
-      } else if (msg.stat) {
-        workerStats[msg.id] = {
+      if (msg.stat) {
+        stats[msg.id] = {
           sent: msg.sent,
           success: msg.success,
           failed: msg.failed
         };
+      } else if (msg.done) {
+        stats[msg.id].done = true;
       }
     });
 
     worker.on('error', (err) => {
-      console.error(`[ERROR] Worker error: ${err.message}`);
+      console.error(`[ERROR] Worker error target#${target.id}: ${err.message}`);
     });
   }
 
-  const statInterval = setInterval(() => {
-    if (!isRunning) {
-      clearInterval(statInterval);
-      if (targetQueue.length > 0) runNextTarget();
+  activeTargets.set(target.id, { target, stats });
+
+  const interval = setInterval(() => {
+    if (!activeTargets.has(target.id)) {
+      clearInterval(interval);
       return;
     }
-    displayStatsInline();
+    printStats(target.id);
   }, 1000);
+
+  setTimeout(() => {
+    clearInterval(interval);
+    printStats(target.id, true);
+    activeTargets.delete(target.id);
+    console.log(`[INFO] Target #${target.id} finished.`);
+  }, target.duration * 1000);
 }
 
-console.log(`\nSelamat datang di ARX - Advanced Request eXecutor`);
+function printStats(targetId, final = false) {
+  const entry = activeTargets.get(targetId);
+  if (!entry) return;
+
+  const { target, stats } = entry;
+  let totalSent = 0, totalSuccess = 0, totalFailed = 0;
+  Object.values(stats).forEach(s => {
+    totalSent += s.sent || 0;
+    totalSuccess += s.success || 0;
+    totalFailed += s.failed || 0;
+  });
+
+  const line = baseLine + targetId;
+
+  // Simpan posisi cursor sekarang
+  readline.cursorTo(process.stdout, 0);
+  readline.moveCursor(process.stdout, 0, -(process.stdout.rows - line));
+
+  // Tulis statistik dan pad kanan supaya bersih
+  const statText = `[STATS][Target #${targetId}] Sent: ${totalSent} | Success: ${totalSuccess} | Failed: ${totalFailed}   `;
+  process.stdout.write(statText);
+
+  // Kembalikan cursor ke prompt input
+  readline.cursorTo(process.stdout, 0);
+  readline.moveCursor(process.stdout, 0, process.stdout.rows - line);
+
+  if (final) {
+    console.log(`\n[RESULT] Target #${targetId} -> ${target.url}`);
+    console.log(`Sent: ${totalSent}, Success: ${totalSuccess}, Failed: ${totalFailed}\n`);
+  }
+}
+
+console.log('Selamat datang di ARX - Advanced Request eXecutor');
 promptTargetInput();
+
+rl.setPrompt('Command (next/stop): ');
+rl.prompt();
 
 rl.on('line', (input) => {
   const cmd = input.trim().toLowerCase();
   if (cmd === 'next') {
     promptTargetInput();
   } else if (cmd === 'stop') {
-    console.log('\n[INFO] Stopping input. Current queue will finish.');
+    console.log('\n[INFO] Stopping input. All running targets will finish.');
     rl.close();
   } else {
     rl.prompt();
