@@ -32,6 +32,6 @@ function scheduleRequest() {
 setInterval(() => {
   parentPort.postMessage({ type: 'stats', sent, success, failed, index });
   sent = 0; success = 0; failed = 0;
-}, statsInterval * 1000);
+}, statsInterval * 60000);
 
 scheduleRequest();
