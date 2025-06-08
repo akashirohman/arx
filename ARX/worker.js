@@ -1,66 +1,40 @@
-const { workerData, parentPort } = require('worker_threads');
+// worker.js
+const { parentPort, workerData } = require('worker_threads');
 const http = require('http');
 const https = require('https');
+const urlLib = require('url');
 
-const { id, url, rps, duration } = workerData;
+const { url, rps, duration, index, statsInterval } = workerData;
+const endTime = Date.now() + duration * 1000;
 
 let sent = 0;
 let success = 0;
 let failed = 0;
 
-// Untuk mengirim delta tiap request, agar di agregat di main thread
-let lastSent = 0;
-let lastSuccess = 0;
-let lastFailed = 0;
-
-const protocol = url.startsWith('https') ? https : http;
+const { protocol } = urlLib.parse(url);
+const agent = protocol === 'https:' ? new https.Agent({ keepAlive: true }) : new http.Agent({ keepAlive: true });
+const lib = protocol === 'https:' ? https : http;
 
 function sendRequest() {
-  const req = protocol.get(url, (res) => {
-    // Consume response data to free memory
+  const req = lib.get(url, { agent }, (res) => {
     res.on('data', () => {});
-    res.on('end', () => {
-      success++;
-      reportStats();
-    });
+    res.on('end', () => { success++; });
   });
 
-  req.on('error', () => {
-    failed++;
-    reportStats();
-  });
-
+  req.on('error', () => { failed++; });
   req.end();
   sent++;
-  reportStats();
 }
 
-function reportStats() {
-  const sentDelta = sent - lastSent;
-  const successDelta = success - lastSuccess;
-  const failedDelta = failed - lastFailed;
-
-  lastSent = sent;
-  lastSuccess = success;
-  lastFailed = failed;
-
-  if (sentDelta > 0 || successDelta > 0 || failedDelta > 0) {
-    parentPort.postMessage({
-      stat: true,
-      id,
-      sentDelta,
-      successDelta,
-      failedDelta
-    });
-  }
-}
-
-const intervalMs = 1000 / rps;
-const interval = setInterval(() => {
+function scheduleRequest() {
+  if (Date.now() >= endTime) return;
   sendRequest();
-}, intervalMs);
+  setTimeout(scheduleRequest, 1000 / rps);
+}
 
-setTimeout(() => {
-  clearInterval(interval);
-  process.exit(0);
-}, duration * 1000);
+setInterval(() => {
+  parentPort.postMessage({ type: 'stats', sent, success, failed, index });
+  sent = 0; success = 0; failed = 0;
+}, statsInterval * 60000);
+
+scheduleRequest();
