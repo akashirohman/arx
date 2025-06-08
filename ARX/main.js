@@ -12,7 +12,10 @@ const rl = readline.createInterface({
   output: process.stdout
 });
 
-function promptTarget() {
+rl.setPrompt('Command (next/stop): ');
+rl.prompt();
+
+function promptTargetInput() {
   rl.question('Target URL: ', (url) => {
     rl.question('Threads (default 10): ', (threads) => {
       rl.question('RPS (default 100): ', (rps) => {
@@ -24,6 +27,7 @@ function promptTarget() {
             duration: parseInt(duration) || 30
           });
           if (!isRunning) runNextTarget();
+          else rl.prompt();
         });
       });
     });
@@ -41,11 +45,18 @@ function displayStatsInline() {
     totalFailed += stat.failed;
   });
 
-  process.stdout.write(`\r[STATS] Sent: ${totalSent} | Success: ${totalSuccess} | Failed: ${totalFailed}               `);
+  // Simpan posisi cursor lalu tulis statistik di satu baris
+  readline.cursorTo(process.stdout, 0);
+  process.stdout.write(`[STATS] Sent: ${totalSent} | Success: ${totalSuccess} | Failed: ${totalFailed}               `);
+  // Tampilkan prompt lagi agar user tetap bisa input
+  rl.prompt(true);
 }
 
 function runNextTarget() {
-  if (targetQueue.length === 0) return;
+  if (targetQueue.length === 0) {
+    rl.prompt();
+    return;
+  }
 
   const target = targetQueue.shift();
   const currentTargetUrl = target.url;
@@ -74,7 +85,6 @@ function runNextTarget() {
         if (activeThreads === 0) {
           process.stdout.write('\n');
 
-          // Simpan statistik per-target
           let totalSent = 0, totalSuccess = 0, totalFailed = 0;
           Object.values(workerStats).forEach(stat => {
             totalSent += stat.sent;
@@ -92,10 +102,7 @@ function runNextTarget() {
           console.log(`[RESULT] Sent: ${totalSent}, Success: ${totalSuccess}, Failed: ${totalFailed}\n`);
 
           isRunning = false;
-          if (targetQueue.length > 0) runNextTarget();
-          else {
-            promptTarget();
-          }
+          rl.prompt();
         }
       } else if (msg.stat) {
         workerStats[msg.id] = {
@@ -114,6 +121,7 @@ function runNextTarget() {
   const statInterval = setInterval(() => {
     if (!isRunning) {
       clearInterval(statInterval);
+      if (targetQueue.length > 0) runNextTarget();
       return;
     }
     displayStatsInline();
@@ -121,13 +129,16 @@ function runNextTarget() {
 }
 
 console.log(`\nSelamat datang di ARX - Advanced Request eXecutor`);
-promptTarget();
+promptTargetInput();
 
 rl.on('line', (input) => {
-  if (input.trim().toLowerCase() === 'next') {
-    promptTarget();
-  } else if (input.trim().toLowerCase() === 'stop') {
+  const cmd = input.trim().toLowerCase();
+  if (cmd === 'next') {
+    promptTargetInput();
+  } else if (cmd === 'stop') {
     console.log('\n[INFO] Stopping input. Current queue will finish.');
     rl.close();
+  } else {
+    rl.prompt();
   }
 });
