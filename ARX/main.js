@@ -9,7 +9,13 @@ const rl = readline.createInterface({
 
 let targetId = 0;
 const activeTargets = new Map();
-const baseLine = 4; // baris awal untuk statistik
+const baseLine = 3; // baris awal statistik (di bawah welcome & info)
+
+function moveCursorToLine(line) {
+  // pindahkan cursor ke line tertentu relatif dari atas terminal
+  readline.cursorTo(process.stdout, 0, line);
+  readline.clearLine(process.stdout, 0);
+}
 
 function promptTargetInput() {
   rl.question('Target URL: ', (url) => {
@@ -86,16 +92,17 @@ function printStats(targetId, final = false) {
     totalFailed += s.failed || 0;
   });
 
-  const line = baseLine + targetId;
+  // Hitung baris statistik target ini
+  // BaseLine + index target (urut)
+  const targetsSorted = Array.from(activeTargets.keys()).sort((a,b)=>a-b);
+  const index = targetsSorted.indexOf(targetId);
+  const line = baseLine + index;
 
-  // Pindah ke baris statistik target
-  readline.cursorTo(process.stdout, 0);
-  readline.moveCursor(process.stdout, 0, -(process.stdout.rows - line));
-
-  const statText = `[STATS] Sent: ${totalSent} | Success: ${totalSuccess} | Failed: ${totalFailed}   `;
+  moveCursorToLine(line);
+  const statText = `[STATS] Target #${targetId} | Sent: ${totalSent} | Success: ${totalSuccess} | Failed: ${totalFailed}   `;
   process.stdout.write(statText);
 
-  // Kembalikan ke prompt input paling bawah
+  // kembalikan cursor ke prompt
   showPrompt();
 
   if (final) {
@@ -105,10 +112,9 @@ function printStats(targetId, final = false) {
 }
 
 function showPrompt() {
-  // Prompt berada di bawah semua statistik aktif
+  // Prompt di baris paling bawah setelah statistik aktif
   const promptLine = baseLine + activeTargets.size + 1;
-  readline.cursorTo(process.stdout, 0);
-  readline.moveCursor(process.stdout, 0, promptLine - process.stdout.rows);
+  moveCursorToLine(promptLine);
   rl.prompt(true);
 }
 
