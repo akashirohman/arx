@@ -9,10 +9,13 @@ const rl = readline.createInterface({
 
 let targetId = 0;
 const activeTargets = new Map();
-const baseLine = 3; // baris awal statistik (di bawah welcome & info)
+const baseLine = 3; // baris awal statistik
+
+// Untuk throttle update statistik
+const statsCache = new Map();
+const lastUpdateTime = new Map();
 
 function moveCursorToLine(line) {
-  // pindahkan cursor ke line tertentu relatif dari atas terminal
   readline.cursorTo(process.stdout, 0, line);
   readline.clearLine(process.stdout, 0);
 }
@@ -59,7 +62,8 @@ function startTarget(target) {
           success: msg.success,
           failed: msg.failed
         };
-        printStats(target.id);
+        statsCache.set(target.id, stats);
+        throttledPrintStats(target.id);
       } else if (msg.done) {
         stats[msg.id].done = true;
       }
@@ -81,10 +85,14 @@ function startTarget(target) {
 }
 
 function printStats(targetId, final = false) {
+  const stats = statsCache.get(targetId);
+  if (!stats) return;
+
   const entry = activeTargets.get(targetId);
   if (!entry) return;
 
-  const { target, stats } = entry;
+  const { target } = entry;
+
   let totalSent = 0, totalSuccess = 0, totalFailed = 0;
   Object.values(stats).forEach(s => {
     totalSent += s.sent || 0;
@@ -92,8 +100,6 @@ function printStats(targetId, final = false) {
     totalFailed += s.failed || 0;
   });
 
-  // Hitung baris statistik target ini
-  // BaseLine + index target (urut)
   const targetsSorted = Array.from(activeTargets.keys()).sort((a,b)=>a-b);
   const index = targetsSorted.indexOf(targetId);
   const line = baseLine + index;
@@ -102,7 +108,6 @@ function printStats(targetId, final = false) {
   const statText = `[STATS] Target #${targetId} | Sent: ${totalSent} | Success: ${totalSuccess} | Failed: ${totalFailed}   `;
   process.stdout.write(statText);
 
-  // kembalikan cursor ke prompt
   showPrompt();
 
   if (final) {
@@ -111,8 +116,16 @@ function printStats(targetId, final = false) {
   }
 }
 
+// Membatasi update max 1x per detik
+function throttledPrintStats(targetId) {
+  const now = Date.now();
+  if (!lastUpdateTime.has(targetId) || now - lastUpdateTime.get(targetId) > 900) {
+    printStats(targetId);
+    lastUpdateTime.set(targetId, now);
+  }
+}
+
 function showPrompt() {
-  // Prompt di baris paling bawah setelah statistik aktif
   const promptLine = baseLine + activeTargets.size + 1;
   moveCursorToLine(promptLine);
   rl.prompt(true);
