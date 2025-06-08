@@ -9,7 +9,7 @@ const rl = readline.createInterface({
 
 let targetId = 0;
 const activeTargets = new Map();
-const baseLine = 5; // mulai baris ke-5 untuk statistik supaya ada ruang input
+const baseLine = 4; // baris awal untuk statistik
 
 function promptTargetInput() {
   rl.question('Target URL: ', (url) => {
@@ -23,7 +23,7 @@ function promptTargetInput() {
             rps: parseInt(rps) || 100,
             duration: parseInt(duration) || 30
           });
-          rl.prompt();
+          showPrompt();
         });
       });
     });
@@ -31,7 +31,7 @@ function promptTargetInput() {
 }
 
 function startTarget(target) {
-  console.log(`\n[INFO] Starting target #${target.id} -> ${target.url} | Threads: ${target.threads}, RPS: ${target.rps}, Duration: ${target.duration}s`);
+  console.log(`\n[INFO] Starting attack on ${target.url} for ${target.duration}s with ${target.threads} threads at ${target.rps} RPS.`);
 
   let stats = {};
   for (let i = 0; i < target.threads; i++) {
@@ -53,6 +53,7 @@ function startTarget(target) {
           success: msg.success,
           failed: msg.failed
         };
+        printStats(target.id);
       } else if (msg.done) {
         stats[msg.id].done = true;
       }
@@ -65,18 +66,10 @@ function startTarget(target) {
 
   activeTargets.set(target.id, { target, stats });
 
-  const interval = setInterval(() => {
-    if (!activeTargets.has(target.id)) {
-      clearInterval(interval);
-      return;
-    }
-    printStats(target.id);
-  }, 1000);
-
   setTimeout(() => {
-    clearInterval(interval);
-    printStats(target.id, true);
     activeTargets.delete(target.id);
+    printStats(target.id, true);
+    showPrompt();
     console.log(`[INFO] Target #${target.id} finished.`);
   }, target.duration * 1000);
 }
@@ -95,22 +88,28 @@ function printStats(targetId, final = false) {
 
   const line = baseLine + targetId;
 
-  // Simpan posisi cursor sekarang
+  // Pindah ke baris statistik target
   readline.cursorTo(process.stdout, 0);
   readline.moveCursor(process.stdout, 0, -(process.stdout.rows - line));
 
-  // Tulis statistik dan pad kanan supaya bersih
-  const statText = `[STATS][Target #${targetId}] Sent: ${totalSent} | Success: ${totalSuccess} | Failed: ${totalFailed}   `;
+  const statText = `[STATS] Sent: ${totalSent} | Success: ${totalSuccess} | Failed: ${totalFailed}   `;
   process.stdout.write(statText);
 
-  // Kembalikan cursor ke prompt input
-  readline.cursorTo(process.stdout, 0);
-  readline.moveCursor(process.stdout, 0, process.stdout.rows - line);
+  // Kembalikan ke prompt input paling bawah
+  showPrompt();
 
   if (final) {
     console.log(`\n[RESULT] Target #${targetId} -> ${target.url}`);
     console.log(`Sent: ${totalSent}, Success: ${totalSuccess}, Failed: ${totalFailed}\n`);
   }
+}
+
+function showPrompt() {
+  // Prompt berada di bawah semua statistik aktif
+  const promptLine = baseLine + activeTargets.size + 1;
+  readline.cursorTo(process.stdout, 0);
+  readline.moveCursor(process.stdout, 0, promptLine - process.stdout.rows);
+  rl.prompt(true);
 }
 
 console.log('Selamat datang di ARX - Advanced Request eXecutor');
