@@ -1,54 +1,66 @@
-const { parentPort, workerData } = require('worker_threads');
+const { workerData, parentPort } = require('worker_threads');
 const http = require('http');
 const https = require('https');
-const url = require('url');
 
-const { id, url: targetUrl, rps, duration } = workerData;
+const { id, url, rps, duration } = workerData;
 
 let sent = 0;
 let success = 0;
 let failed = 0;
 
+// Untuk mengirim delta tiap request, agar di agregat di main thread
+let lastSent = 0;
+let lastSuccess = 0;
+let lastFailed = 0;
+
+const protocol = url.startsWith('https') ? https : http;
+
 function sendRequest() {
-  const parsed = url.parse(targetUrl);
-  const options = {
-    hostname: parsed.hostname,
-    port: parsed.port || (parsed.protocol === 'https:' ? 443 : 80),
-    path: parsed.path || '/',
-    method: 'GET',
-    timeout: 5000
-  };
-
-  const lib = parsed.protocol === 'https:' ? https : http;
-
-  const req = lib.request(options, (res) => {
+  const req = protocol.get(url, (res) => {
+    // Consume response data to free memory
     res.on('data', () => {});
     res.on('end', () => {
       success++;
+      reportStats();
     });
   });
 
   req.on('error', () => {
     failed++;
-  });
-
-  req.on('timeout', () => {
-    req.abort();
-    failed++;
+    reportStats();
   });
 
   req.end();
   sent++;
+  reportStats();
 }
 
-const interval = setInterval(() => {
-  for (let i = 0; i < rps; i++) {
-    sendRequest();
+function reportStats() {
+  const sentDelta = sent - lastSent;
+  const successDelta = success - lastSuccess;
+  const failedDelta = failed - lastFailed;
+
+  lastSent = sent;
+  lastSuccess = success;
+  lastFailed = failed;
+
+  if (sentDelta > 0 || successDelta > 0 || failedDelta > 0) {
+    parentPort.postMessage({
+      stat: true,
+      id,
+      sentDelta,
+      successDelta,
+      failedDelta
+    });
   }
-  parentPort.postMessage({ id, stat: true, sent, success, failed });
-}, 1000);
+}
+
+const intervalMs = 1000 / rps;
+const interval = setInterval(() => {
+  sendRequest();
+}, intervalMs);
 
 setTimeout(() => {
   clearInterval(interval);
-  parentPort.postMessage({ id, done: true });
+  process.exit(0);
 }, duration * 1000);
