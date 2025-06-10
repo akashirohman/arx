@@ -6,7 +6,6 @@ const https = require("https");
 
 const target = (workerData && workerData.target) || "http://localhost";
 let rps = (workerData && workerData.rps) || 1;
-
 const keepAliveAgent = target.startsWith("https")
   ? new https.Agent({ keepAlive: true })
   : new http.Agent({ keepAlive: true });
@@ -60,6 +59,7 @@ const run = async () => {
   }
 };
 
+// Kirim statistik setiap detik
 setInterval(() => {
   parentPort.postMessage({
     type: "stats",
@@ -69,8 +69,9 @@ setInterval(() => {
     codes: statusCodes,
   });
   statusCodes = {};
-}, 60000);
+}, 1000);
 
+// Proteksi failover otomatis
 process.on("uncaughtException", (err) => {
   parentPort.postMessage({ type: "error", error: err.message });
 });
