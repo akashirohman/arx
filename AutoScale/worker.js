@@ -69,7 +69,7 @@ setInterval(() => {
     codes: statusCodes,
   });
   statusCodes = {};
-}, 1000);
+}, 60000);
 
 process.on("uncaughtException", (err) => {
   parentPort.postMessage({ type: "error", error: err.message });
