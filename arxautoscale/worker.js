@@ -5,7 +5,6 @@ const http = require("http");
 const https = require("https");
 
 const target = workerData.target;
-const rps = workerData.rps;
 const keepAliveAgent = target.startsWith("https")
   ? new https.Agent({ keepAlive: true })
   : new http.Agent({ keepAlive: true });
@@ -40,18 +39,17 @@ const makeRequest = () => {
     req.destroy();
     failed++;
   });
-
   req.end();
   sent++;
 };
 
 const run = async () => {
   const delay = (ms) => new Promise((r) => setTimeout(r, ms));
-  const interval = Math.floor(1000 / rps);
+  const interval = Math.floor(1000 / workerData.rps);
 
   while (!shouldStop) {
     const start = Date.now();
-    for (let i = 0; i < rps; i++) makeRequest();
+    for (let i = 0; i < workerData.rps; i++) makeRequest();
     const elapsed = Date.now() - start;
     if (elapsed < 1000) await delay(1000 - elapsed);
   }
@@ -64,7 +62,6 @@ setInterval(() => {
     success,
     failed,
   });
-  sent = success = failed = 0;
 }, 60000);
 
 run();
