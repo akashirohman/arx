@@ -159,7 +159,9 @@ function listenCommand() {
     if (line.trim().toLowerCase() === "stop") {
       for (const list of Object.values(workers)) {
         for (const worker of list) {
-          worker.postMessage("stop");
+          const removed = workers[url].pop();
+if (removed) removed.postMessage("stop");
+
         }
       }
       console.log(chalk.redBright("\n[STOPPED] All attacks stopped."));
