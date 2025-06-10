@@ -1,11 +1,11 @@
 // worker.js
-
 const { parentPort, workerData } = require("worker_threads");
 const http = require("http");
 const https = require("https");
 
-const target = (workerData && workerData.target) || "http://localhost";
-let rps = (workerData && workerData.rps) || 1;
+const target = workerData.target || "http://localhost";
+let rps = workerData.rps || 1;
+
 const keepAliveAgent = target.startsWith("https")
   ? new https.Agent({ keepAlive: true })
   : new http.Agent({ keepAlive: true });
@@ -23,22 +23,15 @@ parentPort.on("message", (msg) => {
 
 const makeRequest = () => {
   const lib = target.startsWith("https") ? https : http;
-  const req = lib.get(
-    target,
-    {
-      agent: keepAliveAgent,
-      timeout: 5000,
-    },
-    (res) => {
-      const code = res.statusCode;
-      statusCodes[code] = (statusCodes[code] || 0) + 1;
-      res.on("data", () => {});
-      res.on("end", () => {
-        if (code >= 200 && code < 400) success++;
-        else failed++;
-      });
-    }
-  );
+  const req = lib.get(target, { agent: keepAliveAgent, timeout: 5000 }, (res) => {
+    const code = res.statusCode;
+    statusCodes[code] = (statusCodes[code] || 0) + 1;
+    res.on("data", () => {});
+    res.on("end", () => {
+      if (code >= 200 && code < 400) success++;
+      else failed++;
+    });
+  });
 
   req.on("error", () => failed++);
   req.on("timeout", () => {
@@ -59,7 +52,6 @@ const run = async () => {
   }
 };
 
-// Kirim statistik setiap detik
 setInterval(() => {
   parentPort.postMessage({
     type: "stats",
@@ -71,7 +63,6 @@ setInterval(() => {
   statusCodes = {};
 }, 1000);
 
-// Proteksi failover otomatis
 process.on("uncaughtException", (err) => {
   parentPort.postMessage({ type: "error", error: err.message });
 });
