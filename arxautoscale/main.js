@@ -89,8 +89,8 @@ function displayStats() {
     targets.forEach((url, i) => {
       const s = stats[url];
       const statusText = statuses[url] === 'live'
-        ? chalk.greenBright('live')
-        : chalk.redBright('takedown');
+        ? chalk.greenBright('Alive')
+        : chalk.redBright('Takedown');
 
       readline.clearLine(process.stdout, 0);
       process.stdout.write(`[STATS #${i}] ${chalk.yellow('Sent')}: ${s.sent} | ${chalk.green('Success')}: ${s.success} | ${chalk.red('Failed')}: ${s.failed} | ${chalk.cyan('Target')}: ${url} | Status: ${statusText}\n`);
