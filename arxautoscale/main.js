@@ -111,7 +111,7 @@ function displayStats() {
     readline.cursorTo(process.stdout, 0, 2);
     targets.forEach((url, i) => {
       const s = stats[url];
-      const status = statuses[url] === 'live' ? chalk.greenBright('live') : chalk.redBright('takedown');
+      const status = statuses[url] === 'live' ? chalk.greenBright('Alive') : chalk.redBright('Takedown');
       readline.clearLine(process.stdout, 0);
       process.stdout.write(`[STATS #${i}] ${chalk.yellow('Sent')}: ${s.sent} | ${chalk.green('Success')}: ${s.success} | ${chalk.red('Failed')}: ${s.failed} | ${chalk.cyan('Target')}: ${url} | ${status}\n`);
     });
