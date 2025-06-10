@@ -4,8 +4,8 @@ const { parentPort, workerData } = require("worker_threads");
 const http = require("http");
 const https = require("https");
 
-const target = workerData?.target || "http://localhost"; // Fallback
-const rps = workerData?.rps || 1;
+const target = (workerData && workerData.target) || "http://localhost";
+let rps = (workerData && workerData.rps) || 1;
 
 const keepAliveAgent = target.startsWith("https")
   ? new https.Agent({ keepAlive: true })
@@ -19,6 +19,7 @@ let shouldStop = false;
 
 parentPort.on("message", (msg) => {
   if (msg === "stop") shouldStop = true;
+  if (msg.type === "updateRPS") rps = msg.rps;
 });
 
 const makeRequest = () => {
@@ -68,6 +69,10 @@ setInterval(() => {
     codes: statusCodes,
   });
   statusCodes = {};
-}, 1000); // Statistik kirim setiap detik
+}, 1000);
+
+process.on("uncaughtException", (err) => {
+  parentPort.postMessage({ type: "error", error: err.message });
+});
 
 run();
