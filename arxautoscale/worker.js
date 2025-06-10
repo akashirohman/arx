@@ -1,44 +1,58 @@
 // worker.js
-const { parentPort } = require('worker_threads');
+const { parentPort, workerData } = require('worker_threads');
 const http = require('http');
+const https = require('https');
 
-let stop = false;
+const { target, rps } = workerData;
 
-parentPort.on('message', ({ url, rps }) => {
-  const interval = 1000 / rps;
-  const agent = new http.Agent({ keepAlive: true });
+let shouldStop = false;
 
-  async function sendRequest() {
-    if (stop) return;
-    let sent = 0, success = 0, failed = 0;
-    const promises = [];
-
-    for (let i = 0; i < rps; i++) {
-      promises.push(new Promise(resolve => {
-        const req = http.get(url, { agent }, res => {
-          res.resume();
-          res.on('end', () => {
-            success++;
-            resolve();
-          });
-        });
-        req.on('error', () => {
-          failed++;
-          resolve();
-        });
-        req.setTimeout(5000, () => {
-          req.abort();
-          failed++;
-          resolve();
-        });
-        sent++;
-      }));
-    }
-
-    await Promise.all(promises);
-    parentPort.postMessage({ sent, success, failed });
-    setTimeout(sendRequest, 1000);
-  }
-
-  sendRequest();
+parentPort.on('message', (msg) => {
+  if (msg === 'stop') shouldStop = true;
 });
+
+const agent = target.startsWith('https')
+  ? new https.Agent({ keepAlive: true })
+  : new http.Agent({ keepAlive: true });
+
+function sendRequest(callback) {
+  const mod = target.startsWith('https') ? https : http;
+
+  const req = mod.get(target, { agent }, (res) => {
+    res.on('data', () => {});
+    res.on('end', () => callback(true));
+  });
+
+  req.on('error', () => callback(false));
+  req.setTimeout(3000, () => {
+    req.destroy();
+    callback(false);
+  });
+}
+
+function loop() {
+  if (shouldStop) return;
+
+  let sent = 0, success = 0, failed = 0;
+  const interval = setInterval(() => {
+    for (let i = 0; i < rps; i++) {
+      if (shouldStop) break;
+      sendRequest((ok) => {
+        sent++;
+        if (ok) success++;
+        else failed++;
+      });
+    }
+  }, 1000);
+
+  const statTimer = setInterval(() => {
+    if (shouldStop) {
+      clearInterval(interval);
+      clearInterval(statTimer);
+      return;
+    }
+    parentPort.postMessage({ sent, success, failed });
+  }, 60000);
+}
+
+loop();
