@@ -108,7 +108,7 @@ function autoScaleMonitor() {
       statuses[url] = alive ? 'live' : 'takedown';
       scaleUp(url);
     });
-  }, 30000);
+  }, 120000);
 }
 
 function displayStats() {
